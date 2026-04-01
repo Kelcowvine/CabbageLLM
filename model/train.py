@@ -262,7 +262,16 @@ for iter in range(max_iters):
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
 print(decode(model.generate(context, max_new_tokens=200)[0].tolist()))
 
+def build_memory_text():
+    text = ""
+    for speaker, msg in conversation_memory:
+        text += f"{speaker}: {msg}\n"
+    return text
+
+
 print("\nChat mode activated. Type 'quit' to exit.\n")
+
+SYSTEM_PROMPT = "You are a helpful cabbage expert. Answer clearly and directly."
 
 while True:
     user = input("You: ")
@@ -274,23 +283,29 @@ while True:
     if len(conversation_memory) > MAX_MEMORY:
         conversation_memory.pop(0)
 
-    # 1) Try retrieval
+    # --- 1) Force retrieval for short or vague questions ---
+    force_retrieval = len(user.split()) < 3
+
+    # --- 2) Try retrieval ---
     retrieved = retrieve_best_answer(user)
     if retrieved is not None:
-        print("Cabbage person:", retrieved)
+        print("Cabbage Person:", retrieved)
         conversation_memory.append(("bot", retrieved))
         continue
 
-    # 2) If retrieval fails, use generative model
-    tokens = [w for w in user.split() if w in stoi]
+    # --- 3) Build memory-aware generative prompt ---
+    memory_text = build_memory_text()
+    full_input = SYSTEM_PROMPT + "\n" + memory_text + "user: " + user
+
+    # tokenize
+    tokens = [w for w in full_input.split() if w in stoi]
     if len(tokens) == 0:
-        print("Bot: (I don't know these words yet.)")
+        print("Cabbage Person: (I don't know these words yet.)")
         continue
 
     context = torch.tensor([stoi[w] for w in tokens], dtype=torch.long, device=device)[None, :]
     out = model.generate(context, max_new_tokens=50)[0].tolist()
     response = decode(out)
 
-    print("Bot:", response)
+    print("Cabbage Person:", response)
     conversation_memory.append(("bot", response))
-
