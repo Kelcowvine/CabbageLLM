@@ -14,6 +14,9 @@ n_embd = 64
 n_head = 4
 n_layer = 4
 dropout = 0.0
+conversation_memory = []
+MAX_MEMORY = 5
+
 # ------------
 
 torch.manual_seed(1337)
@@ -34,6 +37,18 @@ for line in lines:
         answer = line[2:].strip()
         qa_pairs.append((current_q, answer))
         current_q = None
+
+from sentence_transformers import SentenceTransformer
+import torch.nn.functional as F
+
+embedder = SentenceTransformer('all-MiniLM-L6-v2')
+
+# build embeddings for all questions
+qa_embeddings = []
+for q, a in qa_pairs:
+    emb = embedder.encode(q, convert_to_tensor=True)
+    qa_embeddings.append((emb, a))
+
 # -------------------------------------
 
 # simple word-level tokenizer
@@ -88,17 +103,22 @@ def question_similarity(q1: str, q2: str) -> float:
         return 0.0
     return len(w1 & w2) / len(w1 | w2)
 
-def retrieve_best_answer(user_question: str, threshold: float = 0.2):
-    best_score = 0.0
+def retrieve_best_answer(user_question, threshold=0.4):
+    user_emb = embedder.encode(user_question, convert_to_tensor=True)
+
+    best_score = -1
     best_answer = None
-    for q, a in qa_pairs:
-        score = question_similarity(user_question, q)
+
+    for emb, answer in qa_embeddings:
+        score = F.cosine_similarity(user_emb, emb, dim=0).item()
         if score > best_score:
             best_score = score
-            best_answer = a
+            best_answer = answer
+
     if best_score >= threshold:
         return best_answer
     return None
+
 
 class Head(nn.Module):
     """ one head of self-attention """
@@ -249,13 +269,19 @@ while True:
     if user.lower() == "quit":
         break
 
-    # 1) Try retrieval first
+    # store user message
+    conversation_memory.append(("user", user))
+    if len(conversation_memory) > MAX_MEMORY:
+        conversation_memory.pop(0)
+
+    # 1) Try retrieval
     retrieved = retrieve_best_answer(user)
     if retrieved is not None:
-        print("Bot:", retrieved)
+        print("Cabbage person:", retrieved)
+        conversation_memory.append(("bot", retrieved))
         continue
 
-    # 2) Fall back to the model if no good match
+    # 2) If retrieval fails, use generative model
     tokens = [w for w in user.split() if w in stoi]
     if len(tokens) == 0:
         print("Bot: (I don't know these words yet.)")
@@ -266,3 +292,5 @@ while True:
     response = decode(out)
 
     print("Bot:", response)
+    conversation_memory.append(("bot", response))
+
